@@ -358,6 +358,14 @@ def initialize_ray() -> None:
     else:
         print("Starting Ray cluster...")
 
+    # Disable Ray's uv runtime env hook to avoid pyproject.toml working_dir
+    # check failures when running from subdirectories (Ray 2.54+ issue).
+    try:
+        from ray._private.runtime_env import uv_runtime_env_hook as _uv_hook
+        _uv_hook._get_uv_run_cmdline = lambda: None
+    except Exception:
+        pass
+
     ray.init(**ray_init_kwargs)
 
     if not ray_head_node_address:
