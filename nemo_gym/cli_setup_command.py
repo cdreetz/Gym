@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib.metadata
+import json
 import os
+import shlex
 from os import environ
 from pathlib import Path
 from subprocess import Popen
@@ -100,6 +102,38 @@ def _get_nemo_gym_version_spec(is_editable_install: bool) -> str:
         return ""
 
 
+def _get_nemo_gym_direct_install_spec() -> str | None:
+    try:
+        direct_url = importlib.metadata.distribution("nemo-gym").read_text("direct_url.json")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if not direct_url:
+        return None
+
+    try:
+        direct_url_info = json.loads(direct_url)
+    except json.JSONDecodeError:
+        return None
+
+    url = direct_url_info.get("url")
+    vcs_info = direct_url_info.get("vcs_info")
+    if not isinstance(url, str) or not url:
+        return None
+    if isinstance(vcs_info, dict) and vcs_info.get("vcs") == "git":
+        revision = vcs_info.get("commit_id") or vcs_info.get("requested_revision")
+        if isinstance(revision, str) and revision:
+            return f"nemo-gym @ git+{url}@{revision}"
+        return f"nemo-gym @ git+{url}"
+    return None
+
+
+def _get_nemo_gym_install_spec(is_editable_install: bool) -> str:
+    direct_install_spec = _get_nemo_gym_direct_install_spec()
+    if direct_install_spec:
+        return direct_install_spec
+    return f"nemo-gym{_get_nemo_gym_version_spec(is_editable_install)}"
+
+
 def setup_env_command(dir_path: Path, global_config_dict: DictConfig, prefix: str) -> str:
     head_server_deps = global_config_dict[HEAD_SERVER_DEPS_KEY_NAME]
 
@@ -144,9 +178,9 @@ def setup_env_command(dir_path: Path, global_config_dict: DictConfig, prefix: st
                 # install nemo-gym from pypi instead of relative path in pyproject.toml
                 # with support for pre-releases, custom indexes, and version pinning
                 install_flags = _get_nemo_gym_install_flags()
-                version_spec = _get_nemo_gym_version_spec(is_editable_install)
+                install_spec = shlex.quote(_get_nemo_gym_install_spec(is_editable_install))
                 install_cmd = (
-                    f"""uv pip install {verbose_flag}{uv_pip_python_flag}{install_flags}nemo-gym{version_spec} && """
+                    f"""uv pip install {verbose_flag}{uv_pip_python_flag}{install_flags}{install_spec} && """
                     f"""uv pip install {verbose_flag}{uv_pip_python_flag}--no-sources '-e .' {" ".join(head_server_deps)}"""
                 )
         elif has_requirements_txt:
@@ -156,9 +190,9 @@ def setup_env_command(dir_path: Path, global_config_dict: DictConfig, prefix: st
                 # install nemo-gym from pypi instead of relative path in requirements.txt
                 # with support for pre-releases, custom indexes, and version pinning
                 install_flags = _get_nemo_gym_install_flags()
-                version_spec = _get_nemo_gym_version_spec(is_editable_install)
+                install_spec = shlex.quote(_get_nemo_gym_install_spec(is_editable_install))
                 install_cmd = (
-                    f"""(echo 'nemo-gym{version_spec}' && grep -v -F '../..' requirements.txt) | """
+                    f"""(echo {install_spec} && grep -v -F '../..' requirements.txt) | """
                     f"""uv pip install {verbose_flag}{uv_pip_python_flag}{install_flags}-r /dev/stdin {" ".join(head_server_deps)}"""
                 )
         else:

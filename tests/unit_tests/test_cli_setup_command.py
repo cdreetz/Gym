@@ -22,6 +22,7 @@ from pytest import MonkeyPatch, raises
 import nemo_gym.cli_setup_command
 from nemo_gym.cli_setup_command import (
     _get_nemo_gym_install_flags,
+    _get_nemo_gym_install_spec,
     _get_nemo_gym_version_spec,
     run_command,
     setup_env_command,
@@ -196,7 +197,7 @@ class TestCLISetupCommandSetupEnvCommand:
                 global_config_dict=self._debug_global_config_dict(tmp_path),
                 prefix="my server name",
             )
-        expected_command = f"cd {server_dir} && uv venv --seed --allow-existing --python test python version {server_dir}/.venv > >(sed 's/^/(my server name) /') 2> >(sed 's/^/(my server name) /' >&2) && source {server_dir}/.venv/bin/activate && (echo 'nemo-gym=={version}' && grep -v -F '../..' requirements.txt) | uv pip install -r /dev/stdin ray[default]==test ray version openai==test openai version > >(sed 's/^/(my server name) /') 2> >(sed 's/^/(my server name) /' >&2)"
+        expected_command = f"cd {server_dir} && uv venv --seed --allow-existing --python test python version {server_dir}/.venv > >(sed 's/^/(my server name) /') 2> >(sed 's/^/(my server name) /' >&2) && source {server_dir}/.venv/bin/activate && (echo nemo-gym=={version} && grep -v -F '../..' requirements.txt) | uv pip install -r /dev/stdin ray[default]==test ray version openai==test openai version > >(sed 's/^/(my server name) /') 2> >(sed 's/^/(my server name) /' >&2)"
         assert expected_command == actual_command
 
     @pytest.mark.parametrize("version", ["0.3.0", "0.3.0rc0", "1.0.0", "2.1.3rc1"])
@@ -237,6 +238,39 @@ class TestCLISetupCommandSetupEnvCommand:
         )
 
         expected_command = f"cd {server_dir} && source {uv_venv_dir}/first_level/second_level/.venv/bin/activate"
+        assert expected_command == actual_command
+
+    def test_get_nemo_gym_install_spec_uses_parent_git_direct_url(self) -> None:
+        distribution = MagicMock()
+        distribution.read_text.return_value = (
+            '{"url": "https://github.com/NVIDIA-NeMo/Gym.git", '
+            '"vcs_info": {"vcs": "git", "commit_id": "abc123", "requested_revision": "main"}}'
+        )
+
+        with patch("importlib.metadata.distribution", return_value=distribution):
+            assert (
+                _get_nemo_gym_install_spec(is_editable_install=False)
+                == "nemo-gym @ git+https://github.com/NVIDIA-NeMo/Gym.git@abc123"
+            )
+
+    def test_installs_from_parent_git_direct_url_when_not_editable(self, tmp_path: Path) -> None:
+        server_dir = (tmp_path / "first_level" / "second_level").absolute()
+        server_dir.mkdir(parents=True)
+        (server_dir / "requirements.txt").write_text("pytest\n")
+        distribution = MagicMock()
+        distribution.read_text.return_value = (
+            '{"url": "https://github.com/NVIDIA-NeMo/Gym.git", '
+            '"vcs_info": {"vcs": "git", "commit_id": "abc123", "requested_revision": "main"}}'
+        )
+
+        with patch("importlib.metadata.distribution", return_value=distribution):
+            actual_command = setup_env_command(
+                dir_path=server_dir,
+                global_config_dict=self._debug_global_config_dict(tmp_path),
+                prefix="my server name",
+            )
+
+        expected_command = f"cd {server_dir} && uv venv --seed --allow-existing --python test python version {server_dir}/.venv > >(sed 's/^/(my server name) /') 2> >(sed 's/^/(my server name) /' >&2) && source {server_dir}/.venv/bin/activate && (echo 'nemo-gym @ git+https://github.com/NVIDIA-NeMo/Gym.git@abc123' && grep -v -F '../..' requirements.txt) | uv pip install -r /dev/stdin ray[default]==test ray version openai==test openai version > >(sed 's/^/(my server name) /') 2> >(sed 's/^/(my server name) /' >&2)"
         assert expected_command == actual_command
 
 
