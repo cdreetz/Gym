@@ -14,6 +14,7 @@
 # limitations under the License.
 from unittest.mock import AsyncMock, MagicMock
 
+import orjson
 from pytest import MonkeyPatch, raises
 
 import nemo_gym.global_config
@@ -40,6 +41,54 @@ class TestServerUtils:
 
         monkeypatch.setattr(nemo_gym.server_utils, "_GLOBAL_AIOHTTP_CLIENT_REQUEST_DEBUG", True)
         assert nemo_gym.server_utils.is_global_aiohttp_client_request_debug_enabled()
+
+    def test_forward_request_header_names_from_global_config(self, monkeypatch: MonkeyPatch) -> None:
+        global_config_dict = DictConfig(
+            {
+                "forward_request_headers": [
+                    "X-Rollout-ID",
+                    " x-team-id ",
+                    "X-Rollout-ID",
+                ]
+            }
+        )
+        get_global_config_dict_mock = MagicMock(return_value=global_config_dict)
+        monkeypatch.setattr(nemo_gym.server_utils, "get_global_config_dict", get_global_config_dict_mock)
+
+        assert nemo_gym.server_utils._forward_request_header_names() == ("x-rollout-id", "x-team-id")
+
+    async def test_request_merges_forwarded_headers(self, monkeypatch: MonkeyPatch) -> None:
+        aiohttp_client = MagicMock()
+        aiohttp_client.request = AsyncMock(return_value="my mock response")
+        monkeypatch.setattr(nemo_gym.server_utils, "get_global_aiohttp_client", lambda: aiohttp_client)
+
+        token = nemo_gym.server_utils._FORWARDED_REQUEST_HEADERS.set(
+            {
+                "x-rollout-id": "abc",
+                "x-overridden": "from-context",
+            }
+        )
+        try:
+            actual_response = await nemo_gym.server_utils.request(
+                method="POST",
+                url="http://example.com",
+                json={"hello": "world"},
+                headers={"x-overridden": "from-request"},
+            )
+        finally:
+            nemo_gym.server_utils._FORWARDED_REQUEST_HEADERS.reset(token)
+
+        assert actual_response == "my mock response"
+        aiohttp_client.request.assert_awaited_once_with(
+            method="POST",
+            url="http://example.com",
+            data=orjson.dumps({"hello": "world"}),
+            headers={
+                "x-rollout-id": "abc",
+                "x-overridden": "from-request",
+                "Content-Type": "application/json",
+            },
+        )
 
     def test_ServerClient_load_head_server_config(self, monkeypatch: MonkeyPatch) -> None:
         global_config_dict = DictConfig(

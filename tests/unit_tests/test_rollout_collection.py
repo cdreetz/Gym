@@ -102,6 +102,39 @@ class TestRolloutCollection:
         else:
             assert "[rollout_collection] /run failed" not in captured.out
 
+    async def test_run_examples_forwards_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        row = {
+            AGENT_REF_KEY_NAME: {"name": "my_agent"},
+            "responses_create_params": {"input": "hello"},
+        }
+        response = MagicMock()
+
+        mock_server_client = MagicMock()
+        mock_server_client.post = AsyncMock(return_value=response)
+
+        class MockHelper(RolloutCollectionHelper):
+            def setup_server_client(self, *args, **kwargs):
+                return mock_server_client
+
+        async def noop_raise_for_status(_response):
+            return None
+
+        async def response_json(_response):
+            return {"ok": True}
+
+        monkeypatch.setattr(nemo_gym.rollout_collection, "raise_for_status", noop_raise_for_status)
+        monkeypatch.setattr(nemo_gym.rollout_collection, "get_response_json", response_json)
+
+        result = await next(MockHelper().run_examples([row], headers={"x-rollout-id": "abc"}))
+
+        assert result == (row, {"ok": True})
+        mock_server_client.post.assert_awaited_once_with(
+            server_name="my_agent",
+            url_path="/run",
+            json=row,
+            headers={"x-rollout-id": "abc"},
+        )
+
     def test_preprocess_rows_with_prompt_config(self, tmp_path: Path) -> None:
         """prompt_config builds responses_create_params.input from template."""
         prompt_path = tmp_path / "prompt.yaml"

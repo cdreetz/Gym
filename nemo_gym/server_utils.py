@@ -20,6 +20,7 @@ import sys
 import time
 from abc import abstractmethod
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from logging import Filter as LoggingFilter
 from logging import LogRecord, getLogger
 from os import environ, getenv
@@ -73,6 +74,20 @@ from nemo_gym.profiling import Profiler
 
 _GLOBAL_AIOHTTP_CLIENT: Union[None, ClientSession] = None
 _GLOBAL_AIOHTTP_CLIENT_REQUEST_DEBUG: bool = False
+FORWARD_REQUEST_HEADERS_KEY_NAME = "forward_request_headers"
+_FORWARDED_REQUEST_HEADERS: ContextVar[dict[str, str]] = ContextVar(
+    "nemo_gym_forwarded_request_headers",
+    default={},
+)
+
+
+def _forward_request_header_names() -> Tuple[str, ...]:
+    raw_headers = get_global_config_dict().get(FORWARD_REQUEST_HEADERS_KEY_NAME, ())
+    if raw_headers is None:
+        return ()
+    if isinstance(raw_headers, str):
+        raw_headers = [raw_headers]
+    return tuple(dict.fromkeys(str(header).strip().lower() for header in raw_headers if str(header).strip()))
 
 
 class GlobalAIOHTTPAsyncClientConfig(BaseModel):
@@ -163,6 +178,12 @@ DISCONNECTED_CLIENT_OS_HELP_TEXT = """We've run into this issue in two different
 async def request(
     method: str, url: str, _internal: bool = False, **kwargs: Unpack[_RequestOptions]
 ) -> ClientResponse:  # pragma: no cover
+    forwarded_headers = _FORWARDED_REQUEST_HEADERS.get()
+    if forwarded_headers:
+        headers = dict(forwarded_headers)
+        headers.update(kwargs.get("headers") or {})
+        kwargs["headers"] = headers
+
     # Faster JSON dumps than the default aiohttp json
     if kwargs.get("json"):
         kwargs["data"] = orjson.dumps(kwargs.pop("json"))
@@ -502,6 +523,20 @@ class SimpleServer(BaseServer):
         session_middleware_key = self.get_session_middleware_key()
         app.add_middleware(SessionMiddleware, secret_key=session_middleware_key, session_cookie=session_middleware_key)
 
+    def setup_forward_request_headers_middleware(self, app: FastAPI) -> None:
+        header_names = _forward_request_header_names()
+        if not header_names:
+            return
+
+        @app.middleware("http")
+        async def forward_request_headers(request: Request, call_next):
+            headers = {name: request.headers[name] for name in header_names if name in request.headers}
+            token = _FORWARDED_REQUEST_HEADERS.set(headers)
+            try:
+                return await call_next(request)
+            finally:
+                _FORWARDED_REQUEST_HEADERS.reset(token)
+
     def setup_exception_middleware(self, app: FastAPI) -> None:  # pragma: no cover
         @app.middleware("http")
         async def exception_handling_middleware(request: Request, call_next):
@@ -629,6 +664,7 @@ repr(e): {repr(e)}"""
         server.set_ulimit()
         server.prefix_server_logs()
         server.setup_exception_middleware(app)
+        server.setup_forward_request_headers_middleware(app)
 
         @app.exception_handler(RequestValidationError)
         async def validation_exception_handler(request: Request, exc):
