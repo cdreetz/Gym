@@ -75,9 +75,9 @@ from nemo_gym.profiling import Profiler
 _GLOBAL_AIOHTTP_CLIENT: Union[None, ClientSession] = None
 _GLOBAL_AIOHTTP_CLIENT_REQUEST_DEBUG: bool = False
 FORWARD_REQUEST_HEADERS_KEY_NAME = "forward_request_headers"
-_FORWARDED_REQUEST_HEADERS: ContextVar[dict[str, str]] = ContextVar(
+_FORWARDED_REQUEST_HEADERS: ContextVar[Optional[dict[str, str]]] = ContextVar(
     "nemo_gym_forwarded_request_headers",
-    default={},
+    default=None,
 )
 
 

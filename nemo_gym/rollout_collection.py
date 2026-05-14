@@ -21,7 +21,7 @@ from contextlib import nullcontext
 from copy import deepcopy
 from itertools import repeat
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Literal, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Literal, Mapping, Optional, Tuple, Union
 
 import orjson
 from omegaconf import OmegaConf
@@ -466,7 +466,7 @@ Aggregate metrics: {aggregate_metrics_fpath}""")
         examples: List[Dict],
         head_server_config: Optional[BaseServerConfig] = None,
         semaphore: Optional[Semaphore] = None,
-        headers: Optional[Union[Mapping[str, str], Callable[[Dict], Optional[Mapping[str, str]]]]] = None,
+        headers: Optional[Mapping[str, str]] = None,
     ) -> Iterator[Future]:  # pragma: no cover
         """
         We provide this function as a lower level interface for running rollout collection.
@@ -477,9 +477,8 @@ Aggregate metrics: {aggregate_metrics_fpath}""")
         async def _post_subroutine(row: Dict) -> Tuple[Dict, Dict]:
             async with semaphore:
                 request_kwargs: Dict[str, Any] = {"json": row}
-                request_headers = headers(row) if callable(headers) else headers
-                if request_headers:
-                    request_kwargs["headers"] = dict(request_headers)
+                if headers:
+                    request_kwargs["headers"] = dict(headers)
                 res = await server_client.post(
                     server_name=row["agent_ref"]["name"],
                     url_path="/run",
